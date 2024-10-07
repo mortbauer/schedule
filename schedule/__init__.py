@@ -274,11 +274,7 @@ class Job(object):
         self._schedule_next_run()
         return ret
 
-    def _schedule_next_run(self):
-        """Compute the instant when this job should run next."""
-        # Allow *, ** magic temporarily:
-        # pylint: disable=W0142
-        assert self.unit in ('seconds', 'minutes', 'hours', 'days', 'weeks')
+    def _calc_period(self):
         f = 1
         if self.unit == 'minutes':
             f = 60
@@ -288,7 +284,15 @@ class Job(object):
             f = 60 * 60 * 24
         elif self.unit == 'weeks':
             f = 60 * 60 * 24 * 7
+        else:
+            raise ValueError(f'Unknown time period {self.unit}')
         self.period = f * self.interval
+
+    def _schedule_next_run(self):
+        """Compute the instant when this job should run next."""
+        # Allow *, ** magic temporarily:
+        # pylint: disable=W0142
+        self._calc_period()
         if self.last_run is not None:
             self.next_run = self.last_run
         else:
