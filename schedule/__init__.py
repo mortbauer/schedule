@@ -131,7 +131,7 @@ class Job(object):
         self.period = None  # timedelta between runs, only valid for
         self.start_day = None  # Specific day of the week to start on
         self.key = None
-        self.timeout = 60 # sec
+        self.timeout = -1 # sec
 
     def __lt__(self, other):
         """PeriodicJobs are sortable based on the scheduled time
@@ -283,7 +283,10 @@ class Job(object):
         ret = None
         self.is_running = True
         try:
-            ret = await asyncio.wait_for(self.job_func(),self.timeout)
+            if self.timeout > 0:
+                ret = await asyncio.wait_for(self.job_func(),self.timeout)
+            else:
+                ret = await self.job_func()
         except asyncio.TimeoutError:
             logger.warning('Job %s timedout',self.key)
         finally:
