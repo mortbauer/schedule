@@ -122,6 +122,7 @@ class Job(object):
     def __init__(self, interval):
         self.interval = interval  # pause interval * unit between runs
         self.job_func = None  # the job job_func to run
+        self.is_running = False
         self.unit = None  # time units, e.g. 'minutes', 'hours', ...
         self.at_time = None  # optional time at which this job runs
         self.between_time = None  # optional tuple time bewteen which this job runs
@@ -274,18 +275,21 @@ class Job(object):
     @property
     def should_run(self):
         """True if the job should be run now."""
-        return now() >= self.next_run
+        return (not self.is_running) and (now() >= self.next_run)
 
     async def run(self):
         """Run the job and immediately reschedule it."""
         logger.info('Running job %s', self)
         ret = None
+        self.is_running = True
         try:
             ret = await asyncio.wait_for(self.job_func(),self.timeout)
         except asyncio.TimeoutError:
             logger.warning('Job %s timedout',self.key)
-        self.last_run = now()
-        self.schedule_next_run()
+        finally:
+            self.last_run = now()
+            self.is_running = False
+            self.schedule_next_run()
         return ret
 
     def _calc_period(self):
