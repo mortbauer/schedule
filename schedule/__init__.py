@@ -41,6 +41,7 @@ import time
 
 logger = logging.getLogger('schedule')
 
+_scheduler: 'Scheduler' = None
 
 def now():
     return int(time.time())
@@ -123,6 +124,7 @@ class Job(object):
         self.job_func = None  # the job job_func to run
         self.unit = None  # time units, e.g. 'minutes', 'hours', ...
         self.at_time = None  # optional time at which this job runs
+        self.between_time = None  # optional tuple time bewteen which this job runs
         self.last_run = None  # time of the last run
         self.next_run = None  # time of the next run
         self.period = None  # timedelta between runs, only valid for
@@ -227,6 +229,12 @@ class Job(object):
         self.unit = 'weeks'
         return self
 
+    def between(self, start_time_str, end_time_str):
+        hour_start, minute_start = [t for t in start_time_str.split(':')]
+        hour_end, minute_end = [t for t in end_time_str.split(':')]
+        self.between_time = (int(hour_start)*60*60+int(minute_start)*60,int(hour_end)*60*60 + int(minute_end)*60)
+        return self
+
     def at(self, time_str):
         """Schedule the job every day at a specific time.
 
@@ -260,7 +268,7 @@ class Job(object):
             # __name__, __module__ or __doc__ and the update_wrapper()
             # call will fail.
             pass
-        self._schedule_next_run()
+        self.schedule_next_run()
         return self
 
     @property
@@ -271,12 +279,13 @@ class Job(object):
     async def run(self):
         """Run the job and immediately reschedule it."""
         logger.info('Running job %s', self)
+        ret = None
         try:
             ret = await asyncio.wait_for(self.job_func(),self.timeout)
         except asyncio.TimeoutError:
             logger.warning('Job %s timedout',self.key)
         self.last_run = now()
-        self._schedule_next_run()
+        self.schedule_next_run()
         return ret
 
     def _calc_period(self):
@@ -293,7 +302,7 @@ class Job(object):
             raise ValueError(f'Unknown time period {self.unit}')
         self.period = f * self.interval
 
-    def _schedule_next_run(self):
+    def schedule_next_run(self):
         """Compute the instant when this job should run next."""
         # Allow *, ** magic temporarily:
         # pylint: disable=W0142
@@ -325,7 +334,31 @@ class Job(object):
             if not passed_today:
                 self.next_run -= self.period
 
-        self.next_run += self.period
+        if (now() - (self.next_run + self.period)) > self.period:
+            self.next_run = now()
+        else:
+            self.next_run += self.period
+
+        if self.between_time is not None:
+            # Compute seconds since midnight UTC
+            seconds_in_day = self.next_run % 86400
+            is_in_between = True
+            next_day = False
+            if self.between_time[0] > self.between_time[1] and seconds_in_day > self.between_time[1] and seconds_in_day < self.between_time[0]: # over midnight
+                is_in_between = False
+            elif self.between_time[0] < self.between_time[1] and (seconds_in_day < self.between_time[0] or seconds_in_day > self.between_time[1]):
+                is_in_between = False
+                if seconds_in_day > self.between_time[1]:
+                    next_day = True
+            if not is_in_between:
+                tm = list(time.localtime(self.next_run))
+                tm[3] = self.between_time[0]//3600
+                tm[4] = (self.between_time[0]%3600)//60
+                tm[5] = 0
+                self.next_run = time.mktime(tuple(tm))
+                if next_day:
+                    self.next_day += (60 * 60 *24)
+
         if self.start_day is not None:
             assert self.unit == 'weeks'
             weekdays = (
@@ -351,3 +384,20 @@ class Job(object):
             if (self.next_run - now()) >= 7 * 60 * 60 * 24:
                 self.next_run -= self.period
 
+def every(interval=1):
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = Scheduler()
+    return _scheduler.every(interval)
+
+def clear():
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = Scheduler()
+    _scheduler.clear()
+
+def next_run():
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = Scheduler()
+    return _scheduler.next_run
